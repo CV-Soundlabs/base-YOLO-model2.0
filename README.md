@@ -42,9 +42,14 @@ pip install -r requirements.txt
 
 ## Run
 
-python run_yolo.py
+For base YOLO model:
+python(3) run_yolo.py
 
 Your webcam should open with YOLO detections displayed.
+
+For base hand tracking/ detection model:
+
+python(3) hand_tracking.py
 
 ---
 
@@ -52,4 +57,11 @@ Your webcam should open with YOLO detections displayed.
 
 - Model weights are downloaded automatically by Ultralytics.
 - The MediaPipe team will integrate hand-tracking inside run_yolo.py.
+    - not integrated inside YOLO file since it is using different libraries    and setups for the webcam
 - The venv/ and runs/ folders are git-ignored.
+- Very basic set up for hands detection and trqansparent image modules
+
+## Comments
+
+- think about accomodating a way to choose which camera to do the live stream from
+- imported all the landmarks on hands but definitely need to reduce it to pointer finger and thumb mostly (not even wrist end point)
