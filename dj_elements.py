@@ -357,7 +357,7 @@ def draw_jog_wheel(overlay, panel):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, deck_col, 1, cv2.LINE_AA)
 
 
-def draw_waveform_bar(overlay, panel, title, is_active: bool):
+def draw_waveform_bar(overlay, panel, title, is_active=False):
     """Draw a waveform placeholder. Active deck gets a coloured highlight border."""
     x1, y1, x2, y2 = panel["x1"], panel["y1"], panel["x2"], panel["y2"]
     border_color = active_color() if is_active else (50, 50, 80)
@@ -374,14 +374,13 @@ def draw_waveform_bar(overlay, panel, title, is_active: bool):
         wv_color = active_color() if is_active else (0, 100, 130)
         cv2.line(overlay, (px, mid_y-h), (px, mid_y+h), wv_color, 1)
 
-    # Title + "ACTIVE" badge when selected
-    cv2.putText(overlay, title, (x1+18, y1+24),
-                cv2.FONT_HERSHEY_DUPLEX, 0.55, (180, 180, 180), 1, cv2.LINE_AA)
-    if is_active:
-        badge = "◀ ACTIVE"
-        (bw, _), _ = cv2.getTextSize(badge, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
-        cv2.putText(overlay, badge, (x2-bw-18, y1+22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, active_color(), 1, cv2.LINE_AA)
+     # Left title
+    cv2.putText(
+        overlay, title, (x1 + 18, y1 + 24),
+        cv2.FONT_HERSHEY_DUPLEX, 0.55, (180, 180, 180), 1, cv2.LINE_AA
+    )
+
+
 
 
 
@@ -428,8 +427,9 @@ def draw_ui(frame):
 
 
     deck_a_active = active_deck is deck_a
-    draw_waveform_bar(overlay, WAVEFORM_A, "DECK A  —  click to select", is_active=deck_a_active)
-    draw_waveform_bar(overlay, WAVEFORM_B, "DECK B  —  click to select", is_active=not deck_a_active)
+
+    draw_waveform_bar(overlay, WAVEFORM_A, "DECK A", is_active=deck_a_active)
+    draw_waveform_bar(overlay, WAVEFORM_B, "DECK B", is_active=not deck_a_active)
 
     cv2.addWeighted(overlay, ALPHA, frame, 1 - ALPHA, 0, frame)
 
