@@ -610,7 +610,7 @@ def main():
     state_b.bpm = int(deck_b.get_bpm())
     BPM_SLIDER["value"] = state_a.bpm
 
-    cap = cv2.VideoCapture(2)
+    cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
 
