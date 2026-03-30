@@ -1,5 +1,6 @@
 import os
 
+import librosa
 import vlc
 import time
 
@@ -12,6 +13,8 @@ class DeckEngine:
         self._eq:     vlc.AudioEqualizer | None = None
         self._loaded  = False
         self._volume  = 1.0
+        self._initial_bpm: float = 0.0
+        self._current_bpm: float = 0.0
 
 # Loading
     def load(self, filepath: str) -> bool:
@@ -19,13 +22,19 @@ class DeckEngine:
         try:
             media = _vlc_instance.media_new(filepath)
             self._player.set_media(media)
+
+            y, sr = librosa.load(filepath)
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            self._initial_bpm = tempo[0]
+            self._current_bpm = tempo[0]
+
             self._loaded = True
             print(f"[Deck {self.deck_id}] Loaded: {filepath}")
             return True
         except Exception as e:
             print(f"[Deck {self.deck_id}] Load error: {e}")
             return False
-        
+
 
 #Transport
     def play(self):
@@ -103,14 +112,23 @@ class DeckEngine:
     def get_volume(self) -> float:
         return self._volume
 
-    
-# EQ  
+# BPM
+    def set_bpm(self, bpm: float):
+        # note that VLC doesn't actually support this, so we have to do the math ourselves
+        speed = bpm / self._initial_bpm if self._initial_bpm > 0 else 1.0
+        self._player.set_rate(speed)
+        self._current_bpm = bpm
+
+    def get_bpm(self) -> float:
+        return self._current_bpm
+
+# EQ
     def set_eq(self,
                low:    float = 0.0,
                mid:    float = 0.0,
                high:   float = 0.0,
                preamp: float = 0.0):
-    
+
         if self._eq is None:
             self._eq = vlc.AudioEqualizer()
 

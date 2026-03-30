@@ -11,11 +11,12 @@ KNOB_RADIUS = 20
 
 @dataclass
 class DeckState:
-    volume:    float = 75.0  
-    eq_high:   float = 50.0   
-    eq_mid:    float = 50.0   
-    eq_low:    float = 50.0   
-    jog_angle: float = 0.0    
+    volume:    float = 75.0
+    eq_high:   float = 50.0
+    eq_mid:    float = 50.0
+    eq_low:    float = 50.0
+    jog_angle: float = 0.0
+    bpm:       float = 0.0
 
 state_a = DeckState()
 state_b = DeckState()
@@ -27,8 +28,8 @@ def _active_state() -> DeckState:
 deck_a, deck_b = create_decks()
 active_deck     = deck_a          #points to whichever deck the UI controls
 
-DECK_A_COLOR = (0,  210, 255)     
-DECK_B_COLOR = (220, 0,  255)     
+DECK_A_COLOR = (0,  210, 255)
+DECK_B_COLOR = (220, 0,  255)
 
 def active_color() -> tuple:
     return DECK_A_COLOR if active_deck is deck_a else DECK_B_COLOR
@@ -180,6 +181,7 @@ def _save_active_state():
     s.eq_mid    = eq_knobs[1]["value"]
     s.eq_low    = eq_knobs[2]["value"]
     s.jog_angle = JOG_WHEEL["angle"]
+    s.bpm       = BPM_SLIDER["value"]
 
 
 def _restore_state(s: DeckState):
@@ -189,6 +191,7 @@ def _restore_state(s: DeckState):
     eq_knobs[1]["value"]      = s.eq_mid
     eq_knobs[2]["value"]      = s.eq_low
     JOG_WHEEL["angle"]        = s.jog_angle
+    BPM_SLIDER["value"]       = s.bpm
 
 def _jog_center() -> tuple[int, int]:
     return ((JOG_PANEL["x1"] + JOG_PANEL["x2"]) // 2,
@@ -446,7 +449,7 @@ def on_mouse(event, mx, my, flags, param):
 
     if event == cv2.EVENT_LBUTTONDOWN:
 
-     #Deck selection via waveform bars 
+     #Deck selection via waveform bars
         wa = WAVEFORM_A
         if wa["x1"] <= mx <= wa["x2"] and wa["y1"] <= my <= wa["y2"]:
             if active_deck is not deck_a:
@@ -464,13 +467,13 @@ def on_mouse(event, mx, my, flags, param):
                 print("[UI] Active deck → B")
             return
 
-        #PLAY/PAUSE 
+        #PLAY/PAUSE
         if math.hypot(mx-PLAY_BUTTON["cx"], my-PLAY_BUTTON["cy"]) <= PLAY_BUTTON["r"]:
             PLAY_BUTTON["pressed"] = True
             active_deck.toggle_play_pause()
             return
 
-        #CUE 
+        #CUE
         if math.hypot(mx-CUE_BUTTON["cx"], my-CUE_BUTTON["cy"]) <= CUE_BUTTON["r"]:
             CUE_BUTTON["pressed"] = True
             active_deck.cue()
@@ -493,9 +496,10 @@ def on_mouse(event, mx, my, flags, param):
             bpm["dragging"] = True
             r = (bpm["y2"]-my) / (bpm["y2"]-bpm["y1"])
             bpm["value"] = bpm["min_value"] + max(0.,min(1.,r))*(bpm["max_value"]-bpm["min_value"])
+            active_deck.set_bpm(bpm["value"])
             return
 
-        #Volume slider 
+        #Volume slider
         vol_ratio = (vol["value"]-vol["min_value"]) / (vol["max_value"]-vol["min_value"])
         vol_thumb = int(vol["y2"] - vol_ratio*(vol["y2"]-vol["y1"]))
         if abs(mx-vol["x"]) <= 24 and abs(my-vol_thumb) <= 24:
@@ -516,7 +520,7 @@ def on_mouse(event, mx, my, flags, param):
                 knob["drag_start_val"] = knob["value"]
                 return
 
-        #Jog wheel 
+        #Jog wheel
         jcx, jcy = _jog_center()
         if math.hypot(mx-jcx, my-jcy) <= _jog_radius():
             JOG_WHEEL["dragging"] = True
@@ -528,6 +532,8 @@ def on_mouse(event, mx, my, flags, param):
         if bpm["dragging"]:
             r = (bpm["y2"]-my) / (bpm["y2"]-bpm["y1"])
             bpm["value"] = bpm["min_value"] + max(0.,min(1.,r))*(bpm["max_value"]-bpm["min_value"])
+            active_deck.set_bpm(bpm["value"])
+            _active_state().bpm = bpm["value"]
 
         #Volume
         if vol["dragging"]:
@@ -536,7 +542,7 @@ def on_mouse(event, mx, my, flags, param):
             active_deck.set_volume(vol["value"] / 100.0)
             _active_state().volume = vol["value"]
 
-        #EQ knobs 
+        #EQ knobs
         for i, knob in enumerate(eq_knobs):
             if knob["dragging"]:
                 dy = knob["drag_start_y"] - my
@@ -558,7 +564,7 @@ def on_mouse(event, mx, my, flags, param):
 
             JOG_WHEEL["angle"] = (JOG_WHEEL["angle"] + delta) % 360
             _active_state().jog_angle = JOG_WHEEL["angle"]
-            active_deck.jog(int(delta * 50))         
+            active_deck.jog(int(delta * 50))
             JOG_WHEEL["prev_mouse_angle"] = curr_mouse_angle
 
     elif event == cv2.EVENT_LBUTTONUP:
@@ -588,7 +594,7 @@ def main():
 
     TRACK_A = "track_a.mp3"
     TRACK_B = "track_b.mp3"
-    
+
     ok_a = deck_a.load(TRACK_A)
     ok_b = deck_b.load(TRACK_B)
     if not ok_a or not ok_b:
@@ -598,9 +604,13 @@ def main():
     initial_vol = VOLUME_SLIDER["value"] / 100.0
     deck_a.set_volume(initial_vol)
     deck_b.set_volume(initial_vol)
-    active_deck = deck_a     
-    
-    cap = cv2.VideoCapture(0)
+    active_deck = deck_a
+
+    state_a.bpm = int(deck_a.get_bpm())
+    state_b.bpm = int(deck_b.get_bpm())
+    BPM_SLIDER["value"] = state_a.bpm
+
+    cap = cv2.VideoCapture(2)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
 
@@ -643,7 +653,7 @@ def main():
                     mp_drawing.DrawingSpec(color=(0, 255, 160), thickness=2, circle_radius=4),
                     mp_drawing.DrawingSpec(color=(0, 180, 100), thickness=2),
                 )
-        
+
         PLAY_BUTTON["playing"] = active_deck.is_playing
 
         draw_ui(frame)
