@@ -1,42 +1,44 @@
-import os
-
 import librosa
 import vlc
 import time
+import math
 
-_vlc_instance = vlc.Instance("--quiet")
 
 class DeckEngine:
     def __init__(self, deck_id: str = "A"):
         self.deck_id = deck_id
-        self._player: vlc.MediaPlayer = _vlc_instance.media_player_new()
-        self._eq:     vlc.AudioEqualizer | None = None
-        self._loaded  = False
-        self._volume  = 1.0
+        self._instance: vlc.Instance = vlc.Instance("--quiet")
+        self._player: vlc.MediaPlayer = self._instance.media_player_new()
+        self._eq: vlc.AudioEqualizer = vlc.AudioEqualizer()
+        self._loaded = False
+        self._volume = 0.75        # 0.0 – 1.0
+        self._eq_low  = 0.0        # dB offset, stored so _apply_eq can reuse
+        self._eq_mid  = 0.0
+        self._eq_high = 0.0
         self._initial_bpm: float = 0.0
         self._current_bpm: float = 0.0
 
-# Loading
+    # ------------------------------------------------------------------ loading
     def load(self, filepath: str) -> bool:
-        """Load any audio file VLC supports (MP3, WAV, FLAC, AAC…)."""
         try:
-            media = _vlc_instance.media_new(filepath)
+            media = self._instance.media_new(filepath)
             self._player.set_media(media)
-
             y, sr = librosa.load(filepath)
             tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
             self._initial_bpm = tempo[0]
             self._current_bpm = tempo[0]
-
             self._loaded = True
+            # Pin VLC native volume to max ONCE here and never touch it again.
+            # Everything after this uses the EQ preamp (per-stream) for volume.
+            self._player.audio_set_volume(200)
+            self._apply_eq()
             print(f"[Deck {self.deck_id}] Loaded: {filepath}")
             return True
         except Exception as e:
             print(f"[Deck {self.deck_id}] Load error: {e}")
             return False
 
-
-#Transport
+    # ---------------------------------------------------------------- transport
     def play(self):
         if not self._loaded:
             print(f"[Deck {self.deck_id}] No track loaded.")
@@ -55,23 +57,19 @@ class DeckEngine:
             self.play()
 
     def cue(self):
-        """Stop playback and explicitly seek back to 0:00."""
         self._player.stop()
         self._player.set_time(0)
-        print(f"[Deck {self.deck_id}] ⏹ CUE  (rewound to 0:00)")
+        print(f"[Deck {self.deck_id}] ⏹ CUE (rewound to 0:00)")
 
     @property
     def is_playing(self) -> bool:
         return self._player.is_playing() == 1
 
-
-#Position / jog wheel
+    # --------------------------------------------------------------- position
     def get_position(self) -> float:
-        """Playback position as fraction 0.0 – 1.0."""
         return max(0.0, float(self._player.get_position()))
 
     def set_position(self, fraction: float):
-        """Seek to a fraction of the track."""
         self._player.set_position(max(0.0, min(1.0, float(fraction))))
 
     def get_time_ms(self) -> int:
@@ -86,35 +84,18 @@ class DeckEngine:
         return self._player.get_length()
 
     def jog(self, delta_ms: int):
-        """
-        Nudge forward (positive) or backward (negative) by delta_ms.
-
-        Wire to JOG_WHEEL angle delta in on_mouse():
-            dx = current_angle - previous_angle   # degrees
-            deck_a.jog(int(dx * 50))              # 50 ms per degree, tune to taste
-        """
         self.set_time_ms(self.get_time_ms() + delta_ms)
 
-
-
-# Volume
+    # ------------------------------------------------------------------ volume
     def set_volume(self, value: float):
-        """
-        value : float  0.0 (silent) – 1.0 (full)
-
-        Wire to VOLUME_SLIDER in on_mouse():
-            deck_a.set_volume(VOLUME_SLIDER['value'] / 100.0)
-        """
-        value = max(0.0, min(1.0, float(value)))
-        self._volume = value
-        self._player.audio_set_volume(int(value * 100))
+        self._volume = max(0.0, min(1.0, float(value)))
+        self._apply_eq()
 
     def get_volume(self) -> float:
         return self._volume
 
-# BPM
+    # --------------------------------------------------------------------- BPM
     def set_bpm(self, bpm: float):
-        # note that VLC doesn't actually support this, so we have to do the math ourselves
         speed = bpm / self._initial_bpm if self._initial_bpm > 0 else 1.0
         self._player.set_rate(speed)
         self._current_bpm = bpm
@@ -122,82 +103,80 @@ class DeckEngine:
     def get_bpm(self) -> float:
         return self._current_bpm
 
-# EQ
-    def set_eq(self,
-               low:    float = 0.0,
-               mid:    float = 0.0,
-               high:   float = 0.0,
-               preamp: float = 0.0):
-
-        if self._eq is None:
-            self._eq = vlc.AudioEqualizer()
-
-        self._eq.set_preamp(preamp)
-
-        # Map our 3 bands onto VLC's 10 bands:
-        # LOW  → bands 0-2  (~60, 170, 310 Hz)
-        for b in range(3):
-            self._eq.set_amp_at_index(low, b)
-        # MID  → bands 3-5  (~600 Hz, 1k, 3k)
-        for b in range(3, 6):
-            self._eq.set_amp_at_index(mid, b)
-        # HIGH → bands 6-9  (~6k, 12k, 14k, 18k)
-        for b in range(6, 10):
-            self._eq.set_amp_at_index(high, b)
-
-        self._player.set_equalizer(self._eq)
-        print(f"[Deck {self.deck_id}] EQ  "
-              f"low={low:+.1f}  mid={mid:+.1f}  high={high:+.1f}  preamp={preamp:+.1f} dB")
+    # ---------------------------------------------------------------------- EQ
+    def set_eq(self, low: float = 0.0, mid: float = 0.0,
+               high: float = 0.0, preamp: float = 0.0):
+        self._eq_low  = low
+        self._eq_mid  = mid
+        self._eq_high = high
+        self._apply_eq()
+        print(f"[Deck {self.deck_id}] EQ "
+              f"low={low:+.1f} mid={mid:+.1f} high={high:+.1f} dB")
 
     def reset_eq(self):
-        """Flat EQ — all bands 0 dB."""
         self.set_eq()
 
+    # --------------------------------------------------------- internal helper
+    def _apply_eq(self):
+        """Single source of truth for writing to the VLC equalizer.
+        Volume is expressed as EQ preamp (per-stream, no OS bleed).
+        audio_set_volume is never called here — it was fixed to 200 at load.
+        """
+        v = self._volume
+        if v <= 0.0:
+            self._eq.set_preamp(-20.0)
+            for b in range(10):
+                self._eq.set_amp_at_index(-20.0, b)
+        else:
+            vol_db = max(-20.0, 20.0 * math.log10(v))
+            self._eq.set_preamp(vol_db)
+            for b in range(3):
+                self._eq.set_amp_at_index(max(-20.0, min(20.0, vol_db + self._eq_low)), b)
+            for b in range(3, 6):
+                self._eq.set_amp_at_index(max(-20.0, min(20.0, vol_db + self._eq_mid)), b)
+            for b in range(6, 10):
+                self._eq.set_amp_at_index(max(-20.0, min(20.0, vol_db + self._eq_high)), b)
+        self._player.set_equalizer(self._eq)
 
-#Cleanup
+    # ----------------------------------------------------------------- cleanup
     def release(self):
         self._player.stop()
         self._player.release()
+        self._instance.release()
         print(f"[Deck {self.deck_id}] Released.")
 
 
-#Factory
+# --------------------------------------------------------------------------
+# Factory
+# --------------------------------------------------------------------------
 def create_decks() -> tuple[DeckEngine, DeckEngine]:
-    """Return (deck_a, deck_b) ready to use."""
+    """Return (deck_a, deck_b), each with its own isolated VLC instance."""
     return DeckEngine("A"), DeckEngine("B")
 
 
-
-#Standalone smoke-test:  python audio_engine.py track_a.mp3 track_b.mp3
+# Standalone smoke-test: python audio_engine.py track_a.mp3 track_b.mp3
 if __name__ == "__main__":
     import sys
-
     if len(sys.argv) < 3:
         print("Usage: python audio_engine.py track_a.mp3 track_b.mp3")
         sys.exit(1)
-
     da, db = create_decks()
     da.load(sys.argv[1])
     db.load(sys.argv[2])
-
     print("\n--- Deck A play 3s ---")
     da.play()
     da.set_volume(0.9)
     time.sleep(3)
-
     print("--- Jog forward 5 s ---")
     da.jog(5000)
     time.sleep(3)
-
     print("--- Deck B play alongside ---")
     db.play()
-    db.set_volume(0.7)
+    db.set_volume(0.4)
     time.sleep(3)
-
     print("--- CUE Deck A ---")
     da.cue()
     time.sleep(1)
-
     db.release()
     da.release()
     print("Done.")
